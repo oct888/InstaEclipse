@@ -8,6 +8,7 @@ import android.os.Build;
 
 import org.luckypray.dexkit.DexKitBridge;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -46,6 +47,7 @@ public class Module implements IXposedHookLoadPackage, IXposedHookZygoteInit {
     public static ClassLoader hostClassLoader;
     private static String moduleSourceDir;
     private static String moduleLibDir;
+    private static final List<String> moduleLibDirCandidates = new ArrayList<>();
 
     // for dev usage
     /*
@@ -63,18 +65,19 @@ public class Module implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
         // Detect ABI correctly
         String abi = Build.SUPPORTED_ABIS[0]; // Primary ABI
-        String abiFolder;
+        String libBaseDir = moduleSourceDir.substring(0, moduleSourceDir.lastIndexOf("/")) + "/lib";
+        moduleLibDirCandidates.clear();
+        moduleLibDirCandidates.add(libBaseDir + "/" + abi);
 
-        if (abi.equalsIgnoreCase("arm64-v8a")) abiFolder = "arm64";
-        else if (abi.equalsIgnoreCase("armeabi-v7a") || abi.equalsIgnoreCase("armeabi") || abi.equalsIgnoreCase("armv8i"))
-            abiFolder = "arm";
-        else if (abi.equalsIgnoreCase("x86")) abiFolder = "x86";
-        else if (abi.equalsIgnoreCase("x86_64")) abiFolder = "x86_64";
-        else abiFolder = abi; // fallback just in case
+        if (abi.equalsIgnoreCase("arm64-v8a")) {
+            moduleLibDirCandidates.add(libBaseDir + "/arm64");
+        } else if (abi.equalsIgnoreCase("armeabi-v7a") || abi.equalsIgnoreCase("armeabi") || abi.equalsIgnoreCase("armv8i")) {
+            moduleLibDirCandidates.add(libBaseDir + "/arm");
+        }
 
-        moduleLibDir = moduleSourceDir.substring(0, moduleSourceDir.lastIndexOf("/")) + "/lib/" + abiFolder;
+        moduleLibDir = moduleLibDirCandidates.get(0);
 
-        XposedBridge.log("(InstaEclipse) Module paths initialized:" + "\nSourceDir: " + moduleSourceDir + "\nLibDir: " + moduleLibDir);
+        XposedBridge.log("(InstaEclipse) Module paths initialized:" + "\nSourceDir: " + moduleSourceDir + "\nLibDir: " + moduleLibDir + "\nLibCandidates: " + moduleLibDirCandidates);
     }
 
     @Override
@@ -90,7 +93,7 @@ public class Module implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
                 if (dexKitBridge == null) {
                     // Load the .so file from your module
-                    System.load(moduleLibDir + "/libdexkit.so");
+                    loadDexKitLibrary();
                     XposedBridge.log("libdexkit.so loaded successfully.");
 
                     // Initialize DexKitBridge with your module's APK (for module-specific tasks, if needed)
@@ -112,7 +115,7 @@ public class Module implements IXposedHookLoadPackage, IXposedHookZygoteInit {
             try {
                 if (dexKitBridge == null) {
                     // Load the .so file from your module (if not already loaded)
-                    System.load(moduleLibDir + "/libdexkit.so");
+                    loadDexKitLibrary();
                     // XposedBridge.log("libdexkit.so loaded successfully.");
 
                     // Initialize DexKitBridge with the target app's APK
@@ -267,5 +270,24 @@ public class Module implements IXposedHookLoadPackage, IXposedHookZygoteInit {
         } catch (Exception e) {
             XposedBridge.log("(InstaEclipse): Failed to hook " + lpparam.packageName + ": " + e.getMessage());
         }
+    }
+
+    private void loadDexKitLibrary() {
+        UnsatisfiedLinkError lastError = null;
+
+        for (String candidateDir : moduleLibDirCandidates) {
+            try {
+                System.load(candidateDir + "/libdexkit.so");
+                moduleLibDir = candidateDir;
+                return;
+            } catch (UnsatisfiedLinkError e) {
+                lastError = e;
+            }
+        }
+
+        if (lastError != null) {
+            throw lastError;
+        }
+        throw new UnsatisfiedLinkError("libdexkit.so could not be loaded from any candidate path.");
     }
 }
