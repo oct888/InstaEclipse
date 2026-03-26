@@ -157,8 +157,12 @@ public class Module implements IXposedHookLoadPackage, IXposedHookZygoteInit {
                     SettingsManager.loadAllFlags(context);
                     FeatureManager.refreshFeatureStatus(); // Update internal feature states
 
-                    UIHookManager instagramUI = new UIHookManager();
-                    instagramUI.mainActivity(hostClassLoader);
+                    try {
+                        UIHookManager instagramUI = new UIHookManager();
+                        instagramUI.mainActivity(hostClassLoader);
+                    } catch (Throwable e) {
+                        XposedBridge.log("(InstaEclipse | UIHookManager): ❌ Failed to hook UI entry points: " + e);
+                    }
 
                     XposedBridge.log("(InstaEclipse): " + lpparam.packageName + " package detected. Starting feature hooks...");
 

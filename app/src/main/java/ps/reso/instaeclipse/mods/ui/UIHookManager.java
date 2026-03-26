@@ -11,6 +11,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
 
+import java.lang.reflect.Method;
 import java.util.Map;
 
 import de.robv.android.xposed.XC_MethodHook;
@@ -27,6 +28,8 @@ import ps.reso.instaeclipse.utils.ghost.GhostModeUtils;
 import ps.reso.instaeclipse.utils.toast.CustomToast;
 
 public class UIHookManager {
+    private static final String INSTAGRAM_MAIN_ACTIVITY = "com.instagram.mainactivity.InstagramMainActivity";
+    private static final String INSTAGRAM_MODAL_ACTIVITY = "com.instagram.modal.ModalActivity";
 
     @SuppressLint("StaticFieldLeak")
     private static Activity currentActivity;
@@ -144,8 +147,7 @@ public class UIHookManager {
     }
 
     public void mainActivity(ClassLoader classLoader) {
-        // Hook onCreate of Instagram Main
-        XposedHelpers.findAndHookMethod("com.instagram.mainactivity.InstagramMainActivity", classLoader, "onCreate", android.os.Bundle.class, new XC_MethodHook() {
+        hookLifecycleMethod(classLoader, INSTAGRAM_MAIN_ACTIVITY, "onResume", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 final Activity activity = (Activity) param.thisObject;
@@ -154,33 +156,17 @@ public class UIHookManager {
                     try {
                         setupHooks(activity);
                         addGhostEmojiNextToInbox(activity, isAnyGhostOptionEnabled());
-                        if (!FeatureFlags.showFeatureToasts || CustomToast.toastShown) return;
-                        CustomToast.toastShown = true;
 
-                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                            StringBuilder sb = new StringBuilder("InstaEclipse Loaded 🎯\n");
-                            for (Map.Entry<String, Boolean> entry : FeatureStatusTracker.getStatus().entrySet()) {
-                                sb.append(entry.getValue() ? "✅ " : "❌ ").append(entry.getKey()).append("\n");
-                            }
-                            CustomToast.showCustomToast(activity.getApplicationContext(), sb.toString().trim());
-                        }, 1000);
-                    } catch (Exception ignored) {
-
-                    }
-                });
-            }
-        });
-
-        // Hook onResume - Instagram Main
-        XposedHelpers.findAndHookMethod("com.instagram.mainactivity.InstagramMainActivity", classLoader, "onResume", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                final Activity activity = (Activity) param.thisObject;
-                currentActivity = activity;
-                activity.runOnUiThread(() -> {
-                    try {
-                        setupHooks(activity);
-                        addGhostEmojiNextToInbox(activity, isAnyGhostOptionEnabled());
+                        if (FeatureFlags.showFeatureToasts && !CustomToast.toastShown) {
+                            CustomToast.toastShown = true;
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                StringBuilder sb = new StringBuilder("InstaEclipse Loaded 🎯\n");
+                                for (Map.Entry<String, Boolean> entry : FeatureStatusTracker.getStatus().entrySet()) {
+                                    sb.append(entry.getValue() ? "✅ " : "❌ ").append(entry.getKey()).append("\n");
+                                }
+                                CustomToast.showCustomToast(activity.getApplicationContext(), sb.toString().trim());
+                            }, 1000);
+                        }
 
                         if (FeatureFlags.isImportingConfig) {
                             // De-bounce: flip it off first so it won't re-trigger on next onResume
@@ -193,12 +179,11 @@ public class UIHookManager {
             }
         });
 
-
         // Hook getBottomSheetNavigator - Instagram Main
         BottomSheetHookUtil.hookBottomSheetNavigator(Module.dexKitBridge);
 
         // Hook onResume - Model
-        XposedHelpers.findAndHookMethod("com.instagram.modal.ModalActivity", classLoader, "onResume", new XC_MethodHook() {
+        hookLifecycleMethod(classLoader, INSTAGRAM_MODAL_ACTIVITY, "onResume", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 Activity activity = (Activity) param.thisObject;
@@ -212,6 +197,34 @@ public class UIHookManager {
                 }
             }
         });
+    }
+
+    private static void hookLifecycleMethod(ClassLoader classLoader, String className, String methodName, XC_MethodHook callback) {
+        try {
+            Class<?> targetClass = XposedHelpers.findClass(className, classLoader);
+            Method method = findMethodInHierarchy(targetClass, methodName);
+            if (method == null) {
+                XposedBridge.log("(InstaEclipse | UIHookManager): Missing " + className + "#" + methodName + " in current Instagram build.");
+                return;
+            }
+            XposedBridge.hookMethod(method, callback);
+        } catch (Throwable e) {
+            XposedBridge.log("(InstaEclipse | UIHookManager): Failed to hook " + className + "#" + methodName + ": " + e);
+        }
+    }
+
+    private static Method findMethodInHierarchy(Class<?> targetClass, String methodName, Class<?>... parameterTypes) {
+        Class<?> currentClass = targetClass;
+        while (currentClass != null) {
+            try {
+                Method method = currentClass.getDeclaredMethod(methodName, parameterTypes);
+                method.setAccessible(true);
+                return method;
+            } catch (NoSuchMethodException ignored) {
+                currentClass = currentClass.getSuperclass();
+            }
+        }
+        return null;
     }
 
     private static void applySearchHook(Activity activity, View v) {
